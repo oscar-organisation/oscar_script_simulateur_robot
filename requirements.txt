@@ -1,0 +1,15 @@
+# Dependances Python du simulateur OSCAR
+# Installation : pip install -r requirements.txt
+#
+# Note pour Linux et Raspberry Pi :
+# Avant d'installer ces dependances, exécutez la commande suivante :
+#   sudo apt-get install portaudio19-dev python3-pyaudio libopencv-dev python3-dev
+#
+# Note pour macOS :
+#   brew install portaudio
+
+livekit>=0.11.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+PyJWT>=2.8.0
+sounddevice>=0.4.6
