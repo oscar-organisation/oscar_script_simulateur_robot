@@ -407,6 +407,81 @@ async def start_streaming(params):
     print()
     print("Connexion a la room en cours...")
     room = rtc.Room()
+
+    # Stocke les taches de lecture audio distante pour les annuler a la deconnexion
+    remote_audio_tasks = []
+
+    async def play_remote_audio(track, participant_identity):
+        """
+        Recoit les frames audio d'un participant distant et les joue en temps reel
+        sur les haut-parleurs locaux via sounddevice.
+
+        Architecture non-bloquante :
+        - On utilise une file bornee (maxsize=10) : si on est en retard on jette les 
+          anciennes frames pour ne jamais bloquer la capture video/audio locale.
+        - Chaque piste distante tourne dans sa propre tache asyncio independante.
+        - Compatible Linux / Raspberry Pi via portaudio19-dev.
+        """
+        play_queue = asyncio.Queue(maxsize=10)
+        loop = asyncio.get_event_loop()
+        output_stream = None
+
+        def output_callback(outdata, frames, time_info, status):
+            # Callback execute dans un thread systeme — pas d'await ici
+            try:
+                frame_data = play_queue.get_nowait()
+                outdata[:] = frame_data
+            except asyncio.QueueEmpty:
+                # Aucune donnee disponible : on sort du silence plutot que de bloquer
+                outdata.fill(0)
+
+        try:
+            output_stream = sd.OutputStream(
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                blocksize=FRAMES_PER_BUFFER,
+                callback=output_callback
+            )
+            output_stream.start()
+            print(f"  Audio entrant de '{participant_identity}' — lecture sur les haut-parleurs.")
+
+            audio_stream = rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
+            async for event in audio_stream:
+                frame = event.frame
+                pcm = np.frombuffer(bytes(frame.data), dtype=np.int16).reshape(-1, CHANNELS)
+                # On n'attend pas si la file est pleine — on sacrifie la frame plutot que le delai
+                try:
+                    play_queue.put_nowait(pcm)
+                except asyncio.QueueFull:
+                    pass
+
+        except sd.PortAudioError as e:
+            print(f"  Avertissement : lecture audio de '{participant_identity}' impossible : {e}")
+        except Exception as e:
+            print(f"  Avertissement : erreur audio distant '{participant_identity}' : {e}")
+        finally:
+            if output_stream is not None:
+                try:
+                    output_stream.stop()
+                    output_stream.close()
+                except Exception:
+                    pass
+
+    @room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        """
+        Declenche automatiquement la lecture audio quand un participant distant
+        commence a diffuser. On exclut le propre participant pour eviter l'echo.
+        """
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if participant.identity == params["robot_identity"]:
+            # Ne pas jouer son propre audio en boucle
+            return
+        task = asyncio.ensure_future(play_remote_audio(track, participant.identity))
+        remote_audio_tasks.append(task)
+
     try:
         await room.connect(params["server_url"], token)
     except Exception as e:
@@ -511,6 +586,11 @@ async def start_streaming(params):
     except Exception as e:
         print(f"\nErreur inattendue pendant le streaming : {e}")
     finally:
+        # Annulation des taches de lecture audio distante avant deconnexion
+        for task in remote_audio_tasks:
+            task.cancel()
+        if remote_audio_tasks:
+            await asyncio.gather(*remote_audio_tasks, return_exceptions=True)
         cap.release()
         await room.disconnect()
         print("Deconnecte. A bientot.")
