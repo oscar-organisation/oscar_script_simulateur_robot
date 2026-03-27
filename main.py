@@ -245,66 +245,57 @@ def collect_parameters():
 
 async def test_connectivity(params):
     """
-    Teste la connexion au serveur LiveKit avant de lancer le streaming.
-    Retourne True si la connexion est etablie, False sinon.
+    Teste l'accessibilite du serveur LiveKit avant de lancer le streaming.
+    On verifie que le serveur repond sur son endpoint HTTP/HTTPS.
+    Retourne True si le serveur est joignable, False sinon.
     """
-    from livekit import rtc
-    import jwt
-    import time
+    import urllib.request
+    import urllib.error
 
+    server_url = params["server_url"]
     print()
     print("Test de connectivite en cours...")
 
-    payload = {
-        "iss": params["api_key"],
-        "sub": "connectivity-test",
-        "name": "Test de connexion",
-        "nbf": int(time.time()),
-        "exp": int(time.time()) + 60,
-        "video": {
-            "room": params["room_name"],
-            "roomJoin": True,
-            "canPublish": False,
-            "canSubscribe": False
-        }
-    }
+    # Conversion de wss:// -> https:// et ws:// -> http:// pour le test HTTP
+    test_url = server_url.replace("wss://", "https://").replace("ws://", "http://")
+    if not test_url.endswith("/"):
+        test_url += "/"
 
     try:
-        token = jwt.encode(payload, params["api_secret"], algorithm="HS256")
-    except Exception as e:
-        print(f"\nErreur de generation du token : {e}")
-        print("Verifiez que vos cles API sont correctes.")
-        return False
-
-    room = rtc.Room()
-    try:
-        await room.connect(params["server_url"], token, rtc.RoomOptions(auto_subscribe=False))
-        await room.disconnect()
-        print("Connexion au serveur LiveKit reussie.")
+        req = urllib.request.Request(test_url, method="GET")
+        req.add_header("User-Agent", "OSCAR-Simulator/1.0")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            status = response.status
+            if status in (200, 101, 400, 403, 404):
+                # 200 = OK, 101 = WebSocket upgrade attendu mais pas fait, 400/403/404 = le serveur repond (meme avec une erreur)
+                print(f"Serveur joignable (HTTP {status}).")
+                return True
+    except urllib.error.HTTPError as e:
+        # Un code HTTP d'erreur signifie que le serveur repond quand meme
+        print(f"Serveur joignable (HTTP {e.code}).")
         return True
-    except Exception as e:
-        error_msg = str(e).lower()
-        print("\nEchec de la connexion au serveur LiveKit.")
-
-        if "unauthorized" in error_msg or "401" in error_msg:
-            print("Cause probable : cles API incorrectes ou token invalide.")
-            print("Verifiez vos cles API et le secret.")
-        elif "name resolution" in error_msg or "getaddrinfo" in error_msg or "dns" in error_msg:
+    except urllib.error.URLError as e:
+        reason = str(e.reason).lower() if e.reason else ""
+        print("\nServeur inaccessible.")
+        if "name or service not known" in reason or "getaddrinfo" in reason or "nodename" in reason:
             print("Cause probable : impossible de resoudre l'adresse du serveur.")
-            print(f"Verifiez que '{params['server_url']}' est accessible depuis ce reseau.")
-        elif "connection refused" in error_msg or "refused" in error_msg:
+            print(f"Verifiez que '{server_url}' est correcte et que vous etes connecte a internet.")
+        elif "connection refused" in reason:
             print("Cause probable : le serveur est hors ligne ou le port est bloque.")
-            print("Verifiez que le serveur LiveKit est bien demarre.")
-        elif "timeout" in error_msg or "timed out" in error_msg:
+        elif "timed out" in reason or "timeout" in reason:
             print("Cause probable : le serveur ne repond pas (timeout).")
             print("Verifiez votre connexion internet et l'etat du serveur.")
-        elif "ssl" in error_msg or "certificate" in error_msg:
+        elif "ssl" in reason or "certificate" in reason:
             print("Cause probable : probleme de certificat SSL.")
-            print("Verifiez que l'URL commence bien par 'wss://' pour une connexion securisee.")
+            print("Verifiez que l'URL commence bien par 'wss://' pour la production.")
         else:
-            print(f"Detail technique : {e}")
-
+            print(f"Detail : {e}")
         return False
+    except Exception as e:
+        print(f"\nErreur de connexion inattendue : {e}")
+        return False
+
+    return True
 
 
 async def start_streaming(params):
