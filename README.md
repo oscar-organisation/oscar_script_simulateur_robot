@@ -1,128 +1,78 @@
 # OSCAR - Simulateur Robot (Camera + Microphone)
 
+Ce programme capture la camera et le microphone de votre machine et les publie en direct vers le serveur LiveKit OSCAR, permettant a un casque VR ou a n'importe quel client de voir et d'entendre votre flux en temps reel.
 
-Il est concu pour etre simple a utiliser par n'importe qui, y compris des personnes sans experience technique.
+Il est concu pour etre simple a utiliser, y compris pour des personnes sans experience technique.
 
 ---
 
-## Lancement rapide avec les parametres par defaut
+## Guide complet pour debuter
 
-Pour demarrer le simulateur sans saisir les parametres manuellement.
+Si c'est votre premiere utilisation, lisez en priorite le guide detaille :
 
-**Sur Windows — double-cliquez sur `lancer_defaut.bat`**
+**[Guide de demarrage rapide](docs/guide-demarrage-rapide.md)** - installation pas a pas, troubleshooting, notes Raspberry Pi
 
-Ou depuis un terminal `cmd.exe` (pas PowerShell) :
-```cmd
-lancer_defaut.bat
-```
+---
 
-**Sur Linux / Raspberry Pi / macOS :**
+## Lancement rapide (pour les membres de l'equipe OSCAR)
+
+Les parametres de connexion sont deja pre-configures dans `reponses_defaut.txt`.
+
+**Windows** - double-cliquez sur `lancer_defaut.bat`
+
+**Linux / Raspberry Pi :**
 ```bash
 chmod +x lancer_defaut.sh
 ./lancer_defaut.sh
 ```
 
-> Les parametres par defaut sont dans `reponses_defaut.txt`. Modifiez-les si vos cles API ou votre room changent.
-
-
-## Compatibilite
-
-| Systeme | Support |
-|---|---|
-| Windows 10 / 11 | Complet |
-| Ubuntu / Debian (Linux) | Complet |
-| Raspberry Pi 3 / 4 / 5 | Complet |
-| macOS | Complet |
-
 ---
 
 ## Installation
 
-### Sur Windows
+### Windows
 
-1. Assurez-vous d'avoir Python 3.9 ou superieur installe : https://www.python.org/downloads/
-2. Double-cliquez sur le fichier `install.bat`
-3. Attendez la fin de l'installation
+Double-cliquez sur `install.bat`.
 
-### Sur Linux ou Raspberry Pi
-
-1. Ouvrez un terminal
-2. Rendez le script executable et lancez-le :
+### Linux / Raspberry Pi / macOS
 
 ```bash
 chmod +x install.sh
 ./install.sh
 ```
 
-### Sur macOS
-
+Sur macOS uniquement :
 ```bash
 brew install portaudio
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 ```
 
 ---
 
-## Lancement
+## Lancement interactif
 
-### Sur Windows
-
+**Windows :**
 ```cmd
 python main.py
 ```
 
-### Sur Linux / Raspberry Pi / macOS
-
+**Linux / Raspberry Pi / macOS :**
 ```bash
 python3 main.py
 ```
 
-Le programme demarre un menu interactif qui vous guide etape par etape.
+Le programme vous guidera etape par etape pour configurer votre connexion.
 
 ---
 
-## Deroulement du lancement
+## Compatibilite
 
-Au premier lancement, le programme vous demande :
-
-1. **L'URL du serveur LiveKit** : l'adresse du serveur fournie par l'administrateur (ex: `wss://stream-livekit.oscar-bot.com`)
-2. **Les cles API** : au format `cle:secret`, fournies par l'administrateur
-3. **Le nom de la room** : la salle dans laquelle vous souhaitez entrer (ex: `oscar-lot1-room`)
-4. **L'index de la camera** : `0` pour la premiere camera, `1` pour la deuxieme, etc.
-
-Puis le programme :
-- Affiche un recapitulatif
-- Vous demande de confirmer
-- Teste la connexion au serveur avant de demarrer
-- Lance le streaming si la connexion est reussie
-
----
-
-## Gestion des erreurs
-
-Le programme identifie et explique clairement les erreurs les plus courantes :
-
-| Situation | Message affiche |
+| Systeme | Support |
 |---|---|
-| Cles API incorrectes | "Verifiez vos cles API et le secret" |
-| Serveur inaccessible | "Impossible de resoudre l'adresse du serveur" |
-| Serveur eteint | "Le serveur est hors ligne ou le port est bloque" |
-| Timeout reseau | "Le serveur ne repond pas" |
-| Camera non trouvee | "Verifiez que votre camera est bien branchee" |
-| Probleme SSL | "Verifiez que l'URL commence bien par wss://" |
-
----
-
-## Architecture
-
-```
-[Votre machine]
-  Camera (OpenCV) -------> VideoSource --> LiveKit Room
-  Microphone (sounddevice) -> AudioSource ->
-                                              |
-                              [Casque VR / Navigateur]
-                                   subscribes
-```
+| Windows 10 / 11 | Complet |
+| Ubuntu / Debian | Complet |
+| Raspberry Pi 3 / 4 / 5 | Complet |
+| macOS | Complet |
 
 ---
 
@@ -130,24 +80,14 @@ Le programme identifie et explique clairement les erreurs les plus courantes :
 
 ```
 simulateur-robot/
-    main.py          - Programme principal (lancez ce fichier)
-    requirements.txt - Liste des dependances Python
-    install.bat      - Installation automatique Windows
-    install.sh       - Installation automatique Linux / Raspberry Pi
-    .env.example     - Exemple de fichier de configuration
-    README.md        - Ce fichier
+    main.py               - Programme principal
+    requirements.txt      - Dependances Python
+    install.bat           - Installation Windows
+    install.sh            - Installation Linux / Raspberry Pi
+    lancer_defaut.bat     - Lancement rapide Windows
+    lancer_defaut.sh      - Lancement rapide Linux / Raspberry Pi
+    reponses_defaut.txt   - Parametres par defaut (modifiable)
+    .env.example          - Exemple de configuration
+    docs/
+        guide-demarrage-rapide.md  - Guide complet pour debutants
 ```
-
----
-
-## Notes pour Raspberry Pi
-
-Si la camera ne s'ouvre pas sur Raspberry Pi, activez-la depuis la configuration systeme :
-
-```bash
-sudo raspi-config
-# Interface Options -> Camera -> Enable
-sudo reboot
-```
-
-Pour les cameras USB classiques, aucune configuration supplementaire n'est necessaire.
