@@ -1,0 +1,15 @@
+# Reponses par defaut pour le CLI du simulateur OSCAR
+# Usage : python main.py < reponses_defaut.txt
+#
+# Ordre des prompts :
+#   1. URL du serveur LiveKit
+#   2. Cles API (format cle:secret)
+#   3. Nom de la room
+#   4. Index de la camera
+#   5. Confirmation des parametres
+
+wss://stream-livekit.oscar-bot.com
+oscar_prod_key:oscar_super_secret_prod_key
+oscar-lot1-room
+0
+oui
