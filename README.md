@@ -7,19 +7,22 @@ Il est concu pour etre simple a utiliser par n'importe qui, y compris des person
 
 ## Lancement rapide avec les parametres par defaut
 
-Pour les membres de l'equipe OSCAR qui souhaitent demarrer le simulateur sans avoir a saisir les parametres manuellement, deux methodes sont disponibles.
+Pour demarrer le simulateur sans saisir les parametres manuellement.
 
-**Methode 1 - Double-clic (Windows) :**
-Double-cliquez directement sur le fichier `lancer_defaut.bat`. Le simulateur demarre automatiquement avec les parametres de production.
+**Sur Windows — double-cliquez sur `lancer_defaut.bat`**
 
-**Methode 2 - Terminal (Linux / macOS) :**
-```bash
-python3 main.py < reponses_defaut.txt
+Ou depuis un terminal `cmd.exe` (pas PowerShell) :
+```cmd
+lancer_defaut.bat
 ```
 
-> Les parametres par defaut sont stockes dans `reponses_defaut.txt`. Vous pouvez les modifier si vos cles API ou votre room changent.
+**Sur Linux / Raspberry Pi / macOS :**
+```bash
+chmod +x lancer_defaut.sh
+./lancer_defaut.sh
+```
 
-> Sous Windows, ne pas utiliser `< reponses_defaut.txt` directement dans PowerShell — PowerShell ne supporte pas cette syntaxe. Utilisez `lancer_defaut.bat` ou ouvrez un `cmd.exe` classique.
+> Les parametres par defaut sont dans `reponses_defaut.txt`. Modifiez-les si vos cles API ou votre room changent.
 
 
 ## Compatibilite
