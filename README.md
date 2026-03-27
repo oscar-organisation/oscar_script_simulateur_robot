@@ -1,10 +1,26 @@
 # OSCAR - Simulateur Robot (Camera + Microphone)
 
-Ce programme permet de simuler la presence d'un robot OSCAR dans une session de streaming LiveKit. Il capture la camera et le microphone de votre machine et les publie en direct sur le serveur LiveKit, permettant a un casque VR ou a n'importe quel client de voir et d'entendre votre flux en temps reel.
 
 Il est concu pour etre simple a utiliser par n'importe qui, y compris des personnes sans experience technique.
 
 ---
+
+## Lancement rapide avec les parametres par defaut
+
+Pour les membres de l'equipe OSCAR qui souhaitent demarrer le simulateur sans avoir a saisir les parametres manuellement, deux methodes sont disponibles.
+
+**Methode 1 - Double-clic (Windows) :**
+Double-cliquez directement sur le fichier `lancer_defaut.bat`. Le simulateur demarre automatiquement avec les parametres de production.
+
+**Methode 2 - Terminal (Linux / macOS) :**
+```bash
+python3 main.py < reponses_defaut.txt
+```
+
+> Les parametres par defaut sont stockes dans `reponses_defaut.txt`. Vous pouvez les modifier si vos cles API ou votre room changent.
+
+> Sous Windows, ne pas utiliser `< reponses_defaut.txt` directement dans PowerShell — PowerShell ne supporte pas cette syntaxe. Utilisez `lancer_defaut.bat` ou ouvrez un `cmd.exe` classique.
+
 
 ## Compatibilite
 
