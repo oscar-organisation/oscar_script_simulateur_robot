@@ -212,21 +212,34 @@ Sur Raspberry Pi 3, reduisez la resolution en modifiant les valeurs `1280, 720` 
 
 ## Outil bonus - Visionneur web (test/viewer/viewer.html)
 
-Ce fichier HTML permet de **voir en direct les flux video et audio** de tous les participants connectes a la room, depuis un simple navigateur web.
+La page `test/viewer/viewer.html` permet de **visualiser en direct les flux video et audio** de tous les simulateurs connectes a la room, depuis un simple navigateur. Aucune installation requise, aucun token a generer manuellement.
 
-### Comment l'utiliser
+### Comment l'ouvrir
 
-1. Ouvrez le fichier `test/viewer/viewer.html` dans votre navigateur (double-clic suffit)
-2. Renseignez l'URL du serveur et votre token JWT
+Double-cliquez sur le fichier `test/viewer/viewer.html`. Il s'ouvre directement dans votre navigateur.
+
+### Ce que vous voyez dans le formulaire
+
+Les champs sont deja pre-remplis avec les parametres de l'environnement OSCAR. Vous n'avez qu'une seule chose a renseigner :
+
+| Champ | Valeur | Modifiable |
+|---|---|---|
+| URL du serveur LiveKit | `wss://stream-livekit.oscar-bot.com` | Oui (si serveur different) |
+| Nom de la room | `oscar-lot1-room` | Oui (si room differente) |
+| Cle API LiveKit | `oscar_prod_key` | Ne pas modifier |
+| Secret API LiveKit | (masque) | Ne pas modifier |
+| **Nom de l'operateur** | **A remplir** | Oui |
+| Token genere | Rempli automatiquement | Non (lecture seule) |
+
+### Pourquoi un nom d'operateur ?
+
+Chaque personne qui ouvre le visionneur doit entrer un prenom ou un identifiant unique (ex: `joel`, `alice`, `operateur-02`). La page genere alors automatiquement un token JWT personnalise avec votre nom comme identifiant. Cela garantit que deux personnes peuvent regarder la room en meme temps sans se deconnecter mutuellement.
+
+### Etapes de connexion
+
+1. Ouvrez `test/viewer/viewer.html` dans votre navigateur
+2. Entrez votre nom dans le champ **Nom de l'operateur du casque**
 3. Cliquez sur **Se connecter a la room**
-4. La liste des participants apparait automatiquement
-5. Cliquez sur un participant pour voir son flux video et entendre son audio
-
-### Ou obtenir un token d'acces
-
-Le token JWT est necessaire pour s'authentifier aupres du serveur LiveKit.
-Consultez la documentation officielle du projet OSCAR pour obtenir votre cle d'acces :
-
-**Documentation OSCAR — Acces a la Room :** https://oscar-bot.atlassian.net/wiki/x/AQAS
-
-> Ce lien est aussi accessible directement depuis la page du visionneur, sous le champ "Token JWT".
+4. Le token est genere automatiquement et s'affiche dans le champ lecture seule
+5. La liste des simulateurs connectes apparait dans le panneau de gauche
+6. Cliquez sur un simulateur pour voir son flux video et entendre son audio en direct
