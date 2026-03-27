@@ -102,15 +102,42 @@ def print_banner():
 def prompt_string(label, default=None, required=True):
     """
     Affiche un prompt propre et retourne la valeur saisie.
-    Si default est fourni, il est affiche et utilise si l'utilisateur ne saisit rien.
+    Si stdin est un pipe (non-interactif), ignore les lignes vides et les commentaires (#).
+    Si default est fourni, il est affiche et utilise si l'utilisateur n'entre rien.
     """
+    import sys
+
     if default:
         label_display = f"  {label} [defaut: {default}] : "
     else:
         label_display = f"  {label} : "
 
+    is_interactive = sys.stdin.isatty()
+
     while True:
-        value = input(label_display).strip()
+        print(label_display, end="", flush=True)
+        raw = sys.stdin.readline()
+
+        # En mode pipe (non-interactif), on affiche ce qui est lu pour rendre le log lisible
+        if not is_interactive:
+            print(raw.rstrip())
+
+        # Fin de fichier ou flux ferme
+        if not raw:
+            if default is not None:
+                return default
+            elif not required:
+                return ""
+            else:
+                print("    Fin de flux inattendue. Utilisation de la valeur par defaut si disponible.")
+                return default or ""
+
+        value = raw.strip()
+
+        # On ignore les lignes vides et les commentaires en mode pipe
+        if not is_interactive and (not value or value.startswith("#")):
+            continue
+
         if value:
             return value
         elif default is not None:
