@@ -14,6 +14,11 @@
 import sys
 import os
 import platform
+import warnings
+
+# On filtre l'avertissement de longueur de cle HMAC emis par PyJWT.
+# La cle est definie cote serveur et ne peut pas etre modifiee ici.
+warnings.filterwarnings("ignore", message=".*HMAC key.*")
 
 # Verification de la version Python minimale requise
 if sys.version_info < (3, 9):
@@ -500,7 +505,8 @@ async def start_streaming(params):
 
     try:
         await asyncio.gather(capture_video(), capture_audio())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Arret normal demande par l'utilisateur (Ctrl+C)
         print("\nArret du streaming demande.")
     except Exception as e:
         print(f"\nErreur inattendue pendant le streaming : {e}")
@@ -532,17 +538,27 @@ async def run():
         print("  Choisissez un nom different pour eviter le conflit.")
         print()
 
-        while True:
-            new_name = prompt_string("Nouveau nom de robot", required=True)
-            new_name = "".join(c if c.isalnum() or c == "-" else "-" for c in new_name.strip()).lower()
-            new_identity = f"simulateur-robot-{new_name}"
-            params["robot_identity"] = new_identity
+        # En mode pipe (lancement depuis un fichier), il n'est pas possible
+        # de demander un nouveau nom interactivement. On ajoute automatiquement
+        # un suffixe numerique derive du timestamp pour eviter le conflit.
+        if not sys.stdin.isatty():
+            import time
+            suffix = str(int(time.time()))[-4:]
+            auto_identity = f"{params['robot_identity']}-{suffix}"
+            params["robot_identity"] = auto_identity
+            print(f"  Mode automatique : nom ajuste en '{auto_identity}'.")
+        else:
+            while True:
+                new_name = prompt_string("Nouveau nom de robot", required=True)
+                new_name = "".join(c if c.isalnum() or c == "-" else "-" for c in new_name.strip()).lower()
+                new_identity = f"simulateur-robot-{new_name}"
+                params["robot_identity"] = new_identity
 
-            if not check_identity_in_room(params):
-                print(f"  Nom '{new_identity}' disponible.")
-                break
-            else:
-                print(f"  '{new_identity}' est aussi pris. Essayez un autre nom.")
+                if not check_identity_in_room(params):
+                    print(f"  Nom '{new_identity}' disponible.")
+                    break
+                else:
+                    print(f"  '{new_identity}' est aussi pris. Essayez un autre nom.")
     else:
         print(f"  Nom '{params['robot_identity']}' disponible.")
 
@@ -558,4 +574,9 @@ async def run():
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        # L'utilisateur a appuye sur Ctrl+C depuis le terminal principal.
+        # Le nettoyage a deja ete effectue dans le bloc finally de start_streaming.
+        print("\nProgramme arrete.")
