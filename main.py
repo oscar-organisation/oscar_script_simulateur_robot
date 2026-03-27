@@ -416,31 +416,55 @@ async def start_streaming(params):
         Recoit les frames audio d'un participant distant et les joue en temps reel
         sur les haut-parleurs locaux via sounddevice.
 
-        Architecture non-bloquante :
-        - On utilise une file bornee (maxsize=10) : si on est en retard on jette les 
-          anciennes frames pour ne jamais bloquer la capture video/audio locale.
-        - Chaque piste distante tourne dans sa propre tache asyncio independante.
-        - Compatible Linux / Raspberry Pi via portaudio19-dev.
+        Architecture lock-free, compatible Linux / Raspberry Pi :
+        - collections.deque : thread-safe sans verrou (GIL, single-producer/single-consumer).
+          Jamais de lock dans le callback audio — indispensable pour eviter les glitches.
+        - Pas de blocksize fixe sur l'OutputStream : sounddevice choisit la taille optimale
+          selon le materiel. Cela evite le mismatch avec les frames LiveKit (480 samples WebRTC).
+        - Buffer 'leftover' : gere le desalignement entre la taille des frames recues et celle
+          demandee par le callback. Aucune perte de sample, aucune latence ajoutee.
+        - Si la deque depasse 20 frames (~200ms), on jette les nouvelles pour ne pas accumuler.
         """
-        play_queue = asyncio.Queue(maxsize=10)
-        loop = asyncio.get_event_loop()
+        import collections
+        sample_deque = collections.deque()
+        # Buffer de samples residuels entre deux appels du callback (np.ndarray ou vide)
+        leftover = np.zeros((0, CHANNELS), dtype=np.int16)
         output_stream = None
 
         def output_callback(outdata, frames, time_info, status):
-            # Callback execute dans un thread systeme — pas d'await ici
-            try:
-                frame_data = play_queue.get_nowait()
-                outdata[:] = frame_data
-            except asyncio.QueueEmpty:
-                # Aucune donnee disponible : on sort du silence plutot que de bloquer
-                outdata.fill(0)
+            nonlocal leftover
+            result = np.zeros((frames, CHANNELS), dtype=np.int16)
+            pos = 0
+
+            # 1. Consommer d'abord les echantillons restants du precedent callback
+            if len(leftover) > 0:
+                n = min(len(leftover), frames)
+                result[:n] = leftover[:n]
+                leftover = leftover[n:]
+                pos = n
+
+            # 2. Puis piocher dans la deque jusqu'a remplir outdata
+            while pos < frames:
+                try:
+                    chunk = sample_deque.popleft()
+                except IndexError:
+                    break  # Plus de donnees : le reste reste a zero (silence)
+                n = min(len(chunk), frames - pos)
+                result[pos:pos + n] = chunk[:n]
+                if n < len(chunk):
+                    # Conserver le reste pour le prochain callback (pas de perte)
+                    leftover = chunk[n:]
+                pos += n
+
+            outdata[:] = result
 
         try:
             output_stream = sd.OutputStream(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype="int16",
-                blocksize=FRAMES_PER_BUFFER,
+                # Pas de blocksize fixe : sounddevice choisit la taille optimale
+                # selon le driver audio du systeme (Windows WASAPI, Linux ALSA, RPi).
                 callback=output_callback
             )
             output_stream.start()
@@ -450,11 +474,10 @@ async def start_streaming(params):
             async for event in audio_stream:
                 frame = event.frame
                 pcm = np.frombuffer(bytes(frame.data), dtype=np.int16).reshape(-1, CHANNELS)
-                # On n'attend pas si la file est pleine — on sacrifie la frame plutot que le delai
-                try:
-                    play_queue.put_nowait(pcm)
-                except asyncio.QueueFull:
-                    pass
+                # Limite de ~200ms de buffer (20 frames x 480 samples a 48kHz)
+                # Si la deque est pleine, on jette la frame plutot que de bloquer
+                if len(sample_deque) < 20:
+                    sample_deque.append(pcm)
 
         except sd.PortAudioError as e:
             print(f"  Avertissement : lecture audio de '{participant_identity}' impossible : {e}")
