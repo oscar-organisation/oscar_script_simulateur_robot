@@ -199,7 +199,20 @@ def collect_parameters():
     )
 
     print()
-    print("ETAPE 2 - Parametres de capture video")
+    print("ETAPE 2 - Identifiant du robot")
+    print("-" * 50)
+    print("  Choisissez un nom unique pour identifier votre robot dans la room.")
+    print("  Exemple : joel, robot-test, alice, dev-lab")
+    print("  Ce nom permet au casque de distinguer votre flux des autres.")
+    print()
+
+    robot_name = prompt_string("Nom de votre robot", required=True)
+    # Nettoyage : on garde uniquement les caracteres alphanumeriques et les tirets
+    robot_name = "".join(c if c.isalnum() or c == "-" else "-" for c in robot_name.strip()).lower()
+    robot_identity = f"simulateur-robot-{robot_name}"
+
+    print()
+    print("ETAPE 3 - Parametres de capture video")
     print("-" * 50)
     print("  Index de camera : 0 = premiere camera, 1 = deuxieme, etc.")
     print()
@@ -212,12 +225,9 @@ def collect_parameters():
     )
 
     print()
-    print("ETAPE 3 - Parametres de capture audio")
+    print("ETAPE 4 - Parametres de capture audio")
     print("-" * 50)
-    print("  Laissez vide pour utiliser le microphone par defaut du systeme.")
-    print()
-
-    print("  Microphone utilise : periherique par defaut du systeme")
+    print("  Microphone utilise : peripherique par defaut du systeme")
 
     print()
     print("Recapitulatif des parametres :")
@@ -225,8 +235,9 @@ def collect_parameters():
     print(f"  Serveur LiveKit : {server_url}")
     print(f"  Cle API         : {api_key}")
     print(f"  Room            : {room_name}")
+    print(f"  Identifiant     : {robot_identity}")
     print(f"  Camera          : index {camera_index}")
-    print(f"  Micro           : periherique par defaut")
+    print(f"  Micro           : peripherique par defaut")
     print()
 
     confirm = prompt_string("Confirmer ces parametres ? (oui/non)", default="oui")
@@ -239,8 +250,66 @@ def collect_parameters():
         "api_key": api_key,
         "api_secret": api_secret,
         "room_name": room_name,
+        "robot_identity": robot_identity,
         "camera_index": camera_index
     }
+
+
+def check_identity_in_room(params):
+    """
+    Verifie si un participant avec cet identifiant est deja actif dans la room.
+
+    On interroge l'API REST de LiveKit (endpoint ListParticipants).
+    Si le participant est present, il est actuellement connecte et son nom est pris.
+    Si la room n'existe pas encore ou si le participant est absent, le nom est libre.
+
+    Note : LiveKit retire automatiquement un participant de la room des qu'il
+    se deconnecte. Il n'y a donc aucune donnee residuelle a nettoyer manuellement.
+    """
+    import urllib.request
+    import urllib.error
+    import json
+    import jwt
+    import time
+
+    # Generation d'un token d'administration avec les droits de lecture de la room
+    admin_payload = {
+        "iss": params["api_key"],
+        "sub": "admin-check",
+        "nbf": int(time.time()),
+        "exp": int(time.time()) + 30,
+        "video": {
+            "roomAdmin": True,
+            "room": params["room_name"]
+        }
+    }
+    admin_token = jwt.encode(admin_payload, params["api_secret"], algorithm="HS256")
+
+    # Construction de l'URL de l'API REST LiveKit
+    # L'API utilise HTTPS (wss -> https, ws -> http)
+    base_url = params["server_url"].replace("wss://", "https://").replace("ws://", "http://")
+    api_url = f"{base_url}/twirp/livekit.RoomService/ListParticipants"
+
+    body = json.dumps({"room": params["room_name"]}).encode("utf-8")
+    req = urllib.request.Request(api_url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {admin_token}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            data = json.loads(response.read())
+            participants = data.get("participants", [])
+            active_identities = [p.get("identity", "") for p in participants]
+            return params["robot_identity"] in active_identities
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # La room n'existe pas encore : personne dedans, nom libre
+            return False
+        # Toute autre erreur HTTP : on suppose que le nom est libre pour ne pas bloquer
+        return False
+    except Exception:
+        # En cas d'erreur reseau ou autre : on laisse passer et on tentera la connexion
+        return False
 
 
 async def test_connectivity(params):
@@ -317,8 +386,8 @@ async def start_streaming(params):
 
     payload = {
         "iss": params["api_key"],
-        "sub": "local-simulator",
-        "name": "Simulateur Robot (local)",
+        "sub": params["robot_identity"],
+        "name": params["robot_identity"],
         "nbf": int(time.time()),
         "exp": int(time.time()) + 86400,
         "video": {
@@ -449,6 +518,33 @@ async def run():
     clear_screen()
     print_banner()
     params = collect_parameters()
+
+    # Verification du nom de robot avant de lancer le streaming.
+    # Si le nom est deja pris par un simulateur actif dans la room,
+    # on invite l'utilisateur a en choisir un autre.
+    # LiveKit libere automatiquement le nom des qu'un participant se deconnecte,
+    # il n'y a donc pas de conflit persistant entre deux sessions.
+    print()
+    print("Verification du nom de robot en cours...")
+    if check_identity_in_room(params):
+        print()
+        print(f"  Le nom '{params['robot_identity']}' est deja utilise par un simulateur actif dans cette room.")
+        print("  Choisissez un nom different pour eviter le conflit.")
+        print()
+
+        while True:
+            new_name = prompt_string("Nouveau nom de robot", required=True)
+            new_name = "".join(c if c.isalnum() or c == "-" else "-" for c in new_name.strip()).lower()
+            new_identity = f"simulateur-robot-{new_name}"
+            params["robot_identity"] = new_identity
+
+            if not check_identity_in_room(params):
+                print(f"  Nom '{new_identity}' disponible.")
+                break
+            else:
+                print(f"  '{new_identity}' est aussi pris. Essayez un autre nom.")
+    else:
+        print(f"  Nom '{params['robot_identity']}' disponible.")
 
     connected = await test_connectivity(params)
     if not connected:
