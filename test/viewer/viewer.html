@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>OSCAR - Visionneur de Room LiveKit</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0d1117;
+      color: #e6edf3;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header .logo {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, #00d4ff, #0066ff);
+      border-radius: 8px;
+    }
+
+    header h1 { font-size: 18px; font-weight: 600; }
+    header span { font-size: 13px; color: #8b949e; }
+
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #30363d;
+      margin-left: auto;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: #3fb950; box-shadow: 0 0 6px #3fb950; }
+    .status-dot.error { background: #f85149; }
+
+    .container { max-width: 1200px; margin: 0 auto; padding: 32px; }
+
+    /* --- Formulaire de connexion --- */
+    .connect-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 28px;
+      margin-bottom: 32px;
+    }
+
+    .connect-card h2 { font-size: 15px; color: #8b949e; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: #8b949e;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .form-group input {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #e6edf3;
+      font-size: 13px;
+      font-family: 'Courier New', monospace;
+      transition: border-color 0.2s;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: #0066ff;
+    }
+
+    .form-group.full { grid-column: 1 / -1; }
+
+    .btn-connect {
+      display: block;
+      width: 100%;
+      margin-top: 20px;
+      padding: 12px;
+      background: linear-gradient(135deg, #0066ff, #00aaff);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+    .btn-connect:hover { opacity: 0.9; }
+    .btn-connect:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .token-help {
+      margin-top: 16px;
+      padding: 12px 16px;
+      background: #0d2137;
+      border: 1px solid #0066ff33;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #8b949e;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .token-help .icon { font-size: 16px; flex-shrink: 0; }
+
+    .token-help a {
+      color: #58a6ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .token-help a:hover { text-decoration: underline; }
+
+    /* --- Layout principal --- */
+    .main-layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 24px;
+    }
+
+    /* --- Liste des participants --- */
+    .participants-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #30363d;
+      font-size: 13px;
+      font-weight: 600;
+      color: #8b949e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .participant-count {
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 2px 8px;
+      font-size: 11px;
+      color: #58a6ff;
+    }
+
+    .participant-list { padding: 8px; }
+
+    .participant-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+      border: 1px solid transparent;
+    }
+
+    .participant-item:hover { background: #21262d; }
+
+    .participant-item.active {
+      background: #0d2137;
+      border-color: #0066ff;
+    }
+
+    .participant-avatar {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0066ff44, #00aaff44);
+      border: 1px solid #0066ff55;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      color: #58a6ff;
+      flex-shrink: 0;
+    }
+
+    .participant-info { flex: 1; min-width: 0; }
+    .participant-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .participant-identity { font-size: 11px; color: #8b949e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .track-badges { display: flex; gap: 4px; margin-top: 4px; }
+    .badge {
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: #21262d;
+      color: #8b949e;
+    }
+    .badge.active { background: #0d2137; color: #58a6ff; }
+
+    .empty-state {
+      padding: 32px 20px;
+      text-align: center;
+      color: #8b949e;
+      font-size: 13px;
+    }
+
+    /* --- Zone de visionnage --- */
+    .viewer-panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+      min-height: 400px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .viewer-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid #30363d;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .viewer-header h3 { font-size: 14px; font-weight: 600; }
+    .viewer-header span { font-size: 12px; color: #8b949e; }
+
+    .viewer-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: #0d1117;
+    }
+
+    .no-selection {
+      text-align: center;
+      color: #8b949e;
+    }
+
+    .no-selection .icon { font-size: 48px; margin-bottom: 12px; opacity: 0.4; }
+    .no-selection p { font-size: 14px; }
+
+    #video-container {
+      width: 100%;
+      max-width: 800px;
+    }
+
+    #video-container video {
+      width: 100%;
+      border-radius: 8px;
+      background: #000;
+      display: block;
+    }
+
+    .viewer-stats {
+      padding: 12px 20px;
+      border-top: 1px solid #30363d;
+      display: flex;
+      gap: 24px;
+      font-size: 12px;
+      color: #8b949e;
+    }
+
+    .stat span { color: #e6edf3; font-weight: 600; }
+
+    /* --- Logs --- */
+    .log-panel {
+      margin-top: 24px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .log-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid #30363d;
+      font-size: 12px;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    #log { padding: 12px 20px; max-height: 160px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; }
+    .log-line { padding: 2px 0; color: #8b949e; }
+    .log-line.info { color: #58a6ff; }
+    .log-line.success { color: #3fb950; }
+    .log-line.warn { color: #d29922; }
+    .log-line.error { color: #f85149; }
+
+    @media (max-width: 768px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .main-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo"></div>
+  <div>
+    <h1>OSCAR Viewer</h1>
+    <span>Visionneur de Room LiveKit</span>
+  </div>
+  <div class="status-dot" id="status-dot"></div>
+</header>
+
+<div class="container">
+
+  <!-- Formulaire de connexion -->
+  <div class="connect-card">
+    <h2>Connexion a la room</h2>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>URL du serveur LiveKit</label>
+        <input type="text" id="server-url" value="wss://stream-livekit.oscar-bot.com" placeholder="wss://..." />
+      </div>
+      <div class="form-group">
+        <label>Nom de la room</label>
+        <input type="text" id="room-name" value="oscar-lot1-room" placeholder="nom-de-la-room" />
+      </div>
+      <div class="form-group full">
+        <label>Token JWT d'acces</label>
+        <input type="text" id="token" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." />
+      </div>
+    </div>
+
+    <!-- Lien Confluence -->
+    <div class="token-help">
+      <span class="icon">🔑</span>
+      <span>
+        Vous n'avez pas de token ?
+        Consultez la documentation pour obtenir une cle d'acces a la room :
+        <a href="https://oscar-bot.atlassian.net/wiki/x/AQAS" target="_blank" rel="noopener">
+          Documentation OSCAR — Acces a la Room LiveKit ↗
+        </a>
+      </span>
+    </div>
+
+    <button class="btn-connect" id="btn-connect" onclick="connectToRoom()">Se connecter a la room</button>
+  </div>
+
+  <!-- Layout principal -->
+  <div class="main-layout">
+
+    <!-- Participants -->
+    <div class="participants-panel">
+      <div class="panel-header">
+        Participants
+        <span class="participant-count" id="participant-count">0</span>
+      </div>
+      <div class="participant-list" id="participant-list">
+        <div class="empty-state">
+          Connectez-vous a une room pour voir les participants
+        </div>
+      </div>
+    </div>
+
+    <!-- Visionneur -->
+    <div class="viewer-panel">
+      <div class="viewer-header">
+        <h3 id="viewer-title">Aucun participant selectionne</h3>
+        <span id="viewer-subtitle"></span>
+      </div>
+      <div class="viewer-body">
+        <div class="no-selection" id="no-selection">
+          <div class="icon">📡</div>
+          <p>Cliquez sur un participant pour afficher son flux video en direct</p>
+        </div>
+        <div id="video-container" style="display:none;"></div>
+      </div>
+      <div class="viewer-stats">
+        <div>Video : <span id="stat-video">-</span></div>
+        <div>Audio : <span id="stat-audio">-</span></div>
+        <div>Identity : <span id="stat-identity">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Logs -->
+  <div class="log-panel">
+    <div class="log-header">Journal des evenements</div>
+    <div id="log"></div>
+  </div>
+
+</div>
+
+<script>
+  const { Room, RoomEvent, Track, VideoPresets, ConnectionState } = LivekitClient;
+
+  let room = null;
+  let activeParticipantIdentity = null;
+
+  function log(msg, type = 'info') {
+    const div = document.getElementById('log');
+    const line = document.createElement('div');
+    const time = new Date().toLocaleTimeString();
+    line.className = `log-line ${type}`;
+    line.textContent = `[${time}] ${msg}`;
+    div.appendChild(line);
+    div.scrollTop = div.scrollHeight;
+  }
+
+  function setStatus(state) {
+    const dot = document.getElementById('status-dot');
+    dot.className = 'status-dot';
+    if (state === 'connected') dot.classList.add('connected');
+    if (state === 'error') dot.classList.add('error');
+  }
+
+  async function connectToRoom() {
+    const serverUrl = document.getElementById('server-url').value.trim();
+    const token     = document.getElementById('token').value.trim();
+    const btn       = document.getElementById('btn-connect');
+
+    if (!serverUrl || !token) {
+      log('Renseignez l\'URL du serveur et le token JWT.', 'warn');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Connexion en cours...';
+
+    if (room) { await room.disconnect(); room = null; }
+
+    room = new Room({ adaptiveStream: true, dynacast: true });
+
+    room.on(RoomEvent.Connected, () => {
+      log(`Connecte a la room : ${room.name}`, 'success');
+      setStatus('connected');
+      btn.textContent = 'Connecte - Cliquer pour se reconnecter';
+      btn.disabled = false;
+      refreshParticipantList();
+    });
+
+    room.on(RoomEvent.Disconnected, () => {
+      log('Deconnecte de la room.', 'warn');
+      setStatus('error');
+      btn.textContent = 'Se connecter a la room';
+      btn.disabled = false;
+      clearViewer();
+      document.getElementById('participant-list').innerHTML = '<div class="empty-state">Connectez-vous a une room pour voir les participants</div>';
+      document.getElementById('participant-count').textContent = '0';
+    });
+
+    room.on(RoomEvent.ParticipantConnected, (participant) => {
+      log(`Nouveau participant : ${participant.identity} ("${participant.name || ''}")`, 'success');
+      refreshParticipantList();
+    });
+
+    room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+      log(`Participant deconnecte : ${participant.identity}`, 'warn');
+      if (activeParticipantIdentity === participant.identity) clearViewer();
+      refreshParticipantList();
+    });
+
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      log(`Track recu de "${participant.identity}" : ${track.kind}`, 'info');
+      refreshParticipantList();
+      if (activeParticipantIdentity === participant.identity) attachTrack(track, participant);
+    });
+
+    room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+      log(`Track perdu de "${participant.identity}" : ${track.kind}`, 'warn');
+      refreshParticipantList();
+    });
+
+    room.on(RoomEvent.TrackMuted, () => refreshParticipantList());
+    room.on(RoomEvent.TrackUnmuted, () => refreshParticipantList());
+
+    try {
+      await room.connect(serverUrl, token, { autoSubscribe: true });
+    } catch (err) {
+      log(`Erreur de connexion : ${err.message}`, 'error');
+      setStatus('error');
+      btn.textContent = 'Se connecter a la room';
+      btn.disabled = false;
+    }
+  }
+
+  function refreshParticipantList() {
+    if (!room) return;
+    const list = document.getElementById('participant-list');
+    const count = document.getElementById('participant-count');
+    const participants = Array.from(room.remoteParticipants.values());
+    count.textContent = participants.length;
+
+    if (participants.length === 0) {
+      list.innerHTML = '<div class="empty-state">Aucun autre participant dans la room</div>';
+      return;
+    }
+
+    list.innerHTML = participants.map(p => {
+      const hasVideo = [...p.trackPublications.values()].some(t => t.kind === Track.Kind.Video && t.isSubscribed);
+      const hasAudio = [...p.trackPublications.values()].some(t => t.kind === Track.Kind.Audio && t.isSubscribed);
+      const initials = (p.name || p.identity || '?').slice(0, 2).toUpperCase();
+      const isActive = p.identity === activeParticipantIdentity;
+      return `
+        <div class="participant-item ${isActive ? 'active' : ''}" onclick="selectParticipant('${p.identity}')">
+          <div class="participant-avatar">${initials}</div>
+          <div class="participant-info">
+            <div class="participant-name">${p.name || p.identity}</div>
+            <div class="participant-identity">${p.identity}</div>
+            <div class="track-badges">
+              <span class="badge ${hasVideo ? 'active' : ''}">VIDEO</span>
+              <span class="badge ${hasAudio ? 'active' : ''}">AUDIO</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function selectParticipant(identity) {
+    if (!room) return;
+    const participant = room.remoteParticipants.get(identity);
+    if (!participant) return;
+
+    activeParticipantIdentity = identity;
+    document.getElementById('viewer-title').textContent = participant.name || participant.identity;
+    document.getElementById('viewer-subtitle').textContent = `identity: ${participant.identity}`;
+    document.getElementById('stat-identity').textContent = participant.identity;
+    clearViewer(false);
+    document.getElementById('no-selection').style.display = 'none';
+    document.getElementById('video-container').style.display = 'block';
+    log(`Selection du participant : ${identity}`, 'info');
+    participant.trackPublications.forEach(pub => {
+      if (pub.track && pub.isSubscribed) attachTrack(pub.track, participant);
+    });
+    refreshParticipantList();
+  }
+
+  function attachTrack(track, participant) {
+    if (participant.identity !== activeParticipantIdentity) return;
+    const container = document.getElementById('video-container');
+
+    if (track.kind === Track.Kind.Video) {
+      const old = container.querySelector('video.main-video');
+      if (old) old.remove();
+      const el = track.attach();
+      el.className = 'main-video';
+      el.autoplay = true;
+      el.playsInline = true;
+      container.appendChild(el);
+      document.getElementById('stat-video').textContent = 'Actif';
+      log(`Video de "${participant.identity}" affichee.`, 'success');
+    }
+
+    if (track.kind === Track.Kind.Audio) {
+      const el = track.attach();
+      el.autoplay = true;
+      el.style.display = 'none';
+      document.body.appendChild(el);
+      document.getElementById('stat-audio').textContent = 'Actif';
+      log(`Audio de "${participant.identity}" active.`, 'success');
+    }
+  }
+
+  function clearViewer(resetTitle = true) {
+    const container = document.getElementById('video-container');
+    container.innerHTML = '';
+    container.style.display = 'none';
+    document.getElementById('no-selection').style.display = 'block';
+    document.querySelectorAll('audio[data-lk]').forEach(el => el.remove());
+    if (resetTitle) {
+      document.getElementById('viewer-title').textContent = 'Aucun participant selectionne';
+      document.getElementById('viewer-subtitle').textContent = '';
+      document.getElementById('stat-video').textContent = '-';
+      document.getElementById('stat-audio').textContent = '-';
+      document.getElementById('stat-identity').textContent = '-';
+      activeParticipantIdentity = null;
+    }
+  }
+</script>
+
+</body>
+</html>

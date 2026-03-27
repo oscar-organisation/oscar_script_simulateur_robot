@@ -207,3 +207,26 @@ Index habituellement : `0`.
 
 Le Raspberry Pi 4 (4Go RAM) gere confortablement le streaming 720p @ 30fps.
 Sur Raspberry Pi 3, reduisez la resolution en modifiant les valeurs `1280, 720` dans `main.py` vers `640, 480`.
+
+---
+
+## Outil bonus - Visionneur web (test/viewer/viewer.html)
+
+Ce fichier HTML permet de **voir en direct les flux video et audio** de tous les participants connectes a la room, depuis un simple navigateur web.
+
+### Comment l'utiliser
+
+1. Ouvrez le fichier `test/viewer/viewer.html` dans votre navigateur (double-clic suffit)
+2. Renseignez l'URL du serveur et votre token JWT
+3. Cliquez sur **Se connecter a la room**
+4. La liste des participants apparait automatiquement
+5. Cliquez sur un participant pour voir son flux video et entendre son audio
+
+### Ou obtenir un token d'acces
+
+Le token JWT est necessaire pour s'authentifier aupres du serveur LiveKit.
+Consultez la documentation officielle du projet OSCAR pour obtenir votre cle d'acces :
+
+**Documentation OSCAR — Acces a la Room :** https://oscar-bot.atlassian.net/wiki/x/AQAS
+
+> Ce lien est aussi accessible directement depuis la page du visionneur, sous le champ "Token JWT".
