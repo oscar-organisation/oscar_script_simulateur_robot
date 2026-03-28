@@ -389,6 +389,14 @@ async def start_streaming(params):
     CHANNELS = 1
     FRAMES_PER_BUFFER = 960
 
+    # Nombre maximum de frames audio en attente dans la file d'envoi.
+    # Chaque frame = 20ms d'audio (960 samples @ 48kHz).
+    # 3 frames = 60ms de buffer maximum avant de jeter les frames en retard.
+    # Si l'event loop est occupe (video, IO...), on garde l'audio recent,
+    # pas l'audio du passe. Reduire si latence trop elevee, augmenter
+    # si coupures audio frequentes (machine lente / Raspberry Pi sous charge).
+    AUDIO_QUEUE_MAXSIZE = 3
+
     payload = {
         "iss": params["api_key"],
         "sub": params["robot_identity"],
@@ -556,10 +564,27 @@ async def start_streaming(params):
 
     async def capture_audio():
         loop = asyncio.get_event_loop()
-        queue = asyncio.Queue()
+        queue = asyncio.Queue(maxsize=AUDIO_QUEUE_MAXSIZE)
 
         def callback(indata, frames, time_info, status):
-            loop.call_soon_threadsafe(queue.put_nowait, indata.copy())
+            # On copie les donnees AVANT de planifier le callback
+            # pour eviter que sounddevice ne recycle le buffer.
+            data = indata.copy()
+
+            def _safe_put():
+                # Cette fonction s'execute DANS le thread du loop asyncio.
+                # Le try/except est ici, pas dans le thread sounddevice,
+                # ce qui evite que QueueFull remonte dans l'exception handler asyncio.
+                try:
+                    queue.put_nowait(data)
+                except asyncio.QueueFull:
+                    pass  # Frame en retard : on jette, l'audio reste dans le present
+
+            try:
+                loop.call_soon_threadsafe(_safe_put)
+            except RuntimeError:
+                # Le loop est ferme (arret en cours) : on abandonne silencieusement
+                pass
 
         try:
             with sd.InputStream(
@@ -609,13 +634,17 @@ async def start_streaming(params):
     except Exception as e:
         print(f"\nErreur inattendue pendant le streaming : {e}")
     finally:
-        # Annulation des taches de lecture audio distante avant deconnexion
+        # Annulation des taches de lecture audio distante.
+        # On ne fait pas await gather ici : le loop peut deja etre en cours de
+        # fermeture (Ctrl+C). asyncio.run() se charge de nettoyer les taches
+        # annulees automatiquement.
         for task in remote_audio_tasks:
             task.cancel()
-        if remote_audio_tasks:
-            await asyncio.gather(*remote_audio_tasks, return_exceptions=True)
         cap.release()
-        await room.disconnect()
+        try:
+            await room.disconnect()
+        except Exception:
+            pass
         print("Deconnecte. A bientot.")
 
 
