@@ -407,6 +407,104 @@ async def start_streaming(params):
     print()
     print("Connexion a la room en cours...")
     room = rtc.Room()
+
+    # Stocke les taches de lecture audio distante pour les annuler a la deconnexion
+    remote_audio_tasks = []
+
+    async def play_remote_audio(track, participant_identity):
+        """
+        Recoit les frames audio d'un participant distant et les joue en temps reel
+        sur les haut-parleurs locaux via sounddevice.
+
+        Architecture lock-free, compatible Linux / Raspberry Pi :
+        - collections.deque : thread-safe sans verrou (GIL, single-producer/single-consumer).
+          Jamais de lock dans le callback audio — indispensable pour eviter les glitches.
+        - Pas de blocksize fixe sur l'OutputStream : sounddevice choisit la taille optimale
+          selon le materiel. Cela evite le mismatch avec les frames LiveKit (480 samples WebRTC).
+        - Buffer 'leftover' : gere le desalignement entre la taille des frames recues et celle
+          demandee par le callback. Aucune perte de sample, aucune latence ajoutee.
+        - Si la deque depasse 20 frames (~200ms), on jette les nouvelles pour ne pas accumuler.
+        """
+        import collections
+        sample_deque = collections.deque()
+        # Buffer de samples residuels entre deux appels du callback (np.ndarray ou vide)
+        leftover = np.zeros((0, CHANNELS), dtype=np.int16)
+        output_stream = None
+
+        def output_callback(outdata, frames, time_info, status):
+            nonlocal leftover
+            result = np.zeros((frames, CHANNELS), dtype=np.int16)
+            pos = 0
+
+            # 1. Consommer d'abord les echantillons restants du precedent callback
+            if len(leftover) > 0:
+                n = min(len(leftover), frames)
+                result[:n] = leftover[:n]
+                leftover = leftover[n:]
+                pos = n
+
+            # 2. Puis piocher dans la deque jusqu'a remplir outdata
+            while pos < frames:
+                try:
+                    chunk = sample_deque.popleft()
+                except IndexError:
+                    break  # Plus de donnees : le reste reste a zero (silence)
+                n = min(len(chunk), frames - pos)
+                result[pos:pos + n] = chunk[:n]
+                if n < len(chunk):
+                    # Conserver le reste pour le prochain callback (pas de perte)
+                    leftover = chunk[n:]
+                pos += n
+
+            outdata[:] = result
+
+        try:
+            output_stream = sd.OutputStream(
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                # Pas de blocksize fixe : sounddevice choisit la taille optimale
+                # selon le driver audio du systeme (Windows WASAPI, Linux ALSA, RPi).
+                callback=output_callback
+            )
+            output_stream.start()
+            print(f"  Audio entrant de '{participant_identity}' — lecture sur les haut-parleurs.")
+
+            audio_stream = rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
+            async for event in audio_stream:
+                frame = event.frame
+                pcm = np.frombuffer(bytes(frame.data), dtype=np.int16).reshape(-1, CHANNELS)
+                # Limite de ~200ms de buffer (20 frames x 480 samples a 48kHz)
+                # Si la deque est pleine, on jette la frame plutot que de bloquer
+                if len(sample_deque) < 20:
+                    sample_deque.append(pcm)
+
+        except sd.PortAudioError as e:
+            print(f"  Avertissement : lecture audio de '{participant_identity}' impossible : {e}")
+        except Exception as e:
+            print(f"  Avertissement : erreur audio distant '{participant_identity}' : {e}")
+        finally:
+            if output_stream is not None:
+                try:
+                    output_stream.stop()
+                    output_stream.close()
+                except Exception:
+                    pass
+
+    @room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        """
+        Declenche automatiquement la lecture audio quand un participant distant
+        commence a diffuser. On exclut le propre participant pour eviter l'echo.
+        """
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if participant.identity == params["robot_identity"]:
+            # Ne pas jouer son propre audio en boucle
+            return
+        task = asyncio.ensure_future(play_remote_audio(track, participant.identity))
+        remote_audio_tasks.append(task)
+
     try:
         await room.connect(params["server_url"], token)
     except Exception as e:
@@ -511,6 +609,11 @@ async def start_streaming(params):
     except Exception as e:
         print(f"\nErreur inattendue pendant le streaming : {e}")
     finally:
+        # Annulation des taches de lecture audio distante avant deconnexion
+        for task in remote_audio_tasks:
+            task.cancel()
+        if remote_audio_tasks:
+            await asyncio.gather(*remote_audio_tasks, return_exceptions=True)
         cap.release()
         await room.disconnect()
         print("Deconnecte. A bientot.")
