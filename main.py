@@ -14,6 +14,11 @@
 import sys
 import os
 import platform
+import warnings
+
+# On filtre l'avertissement de longueur de cle HMAC emis par PyJWT.
+# La cle est definie cote serveur et ne peut pas etre modifiee ici.
+warnings.filterwarnings("ignore", message=".*HMAC key.*")
 
 # Verification de la version Python minimale requise
 if sys.version_info < (3, 9):
@@ -199,7 +204,20 @@ def collect_parameters():
     )
 
     print()
-    print("ETAPE 2 - Parametres de capture video")
+    print("ETAPE 2 - Identifiant du robot")
+    print("-" * 50)
+    print("  Choisissez un nom unique pour identifier votre robot dans la room.")
+    print("  Exemple : joel, robot-test, alice, dev-lab")
+    print("  Ce nom permet au casque de distinguer votre flux des autres.")
+    print()
+
+    robot_name = prompt_string("Nom de votre robot", required=True)
+    # Nettoyage : on garde uniquement les caracteres alphanumeriques et les tirets
+    robot_name = "".join(c if c.isalnum() or c == "-" else "-" for c in robot_name.strip()).lower()
+    robot_identity = f"simulateur-robot-{robot_name}"
+
+    print()
+    print("ETAPE 3 - Parametres de capture video")
     print("-" * 50)
     print("  Index de camera : 0 = premiere camera, 1 = deuxieme, etc.")
     print()
@@ -212,12 +230,9 @@ def collect_parameters():
     )
 
     print()
-    print("ETAPE 3 - Parametres de capture audio")
+    print("ETAPE 4 - Parametres de capture audio")
     print("-" * 50)
-    print("  Laissez vide pour utiliser le microphone par defaut du systeme.")
-    print()
-
-    print("  Microphone utilise : periherique par defaut du systeme")
+    print("  Microphone utilise : peripherique par defaut du systeme")
 
     print()
     print("Recapitulatif des parametres :")
@@ -225,8 +240,9 @@ def collect_parameters():
     print(f"  Serveur LiveKit : {server_url}")
     print(f"  Cle API         : {api_key}")
     print(f"  Room            : {room_name}")
+    print(f"  Identifiant     : {robot_identity}")
     print(f"  Camera          : index {camera_index}")
-    print(f"  Micro           : periherique par defaut")
+    print(f"  Micro           : peripherique par defaut")
     print()
 
     confirm = prompt_string("Confirmer ces parametres ? (oui/non)", default="oui")
@@ -239,8 +255,66 @@ def collect_parameters():
         "api_key": api_key,
         "api_secret": api_secret,
         "room_name": room_name,
+        "robot_identity": robot_identity,
         "camera_index": camera_index
     }
+
+
+def check_identity_in_room(params):
+    """
+    Verifie si un participant avec cet identifiant est deja actif dans la room.
+
+    On interroge l'API REST de LiveKit (endpoint ListParticipants).
+    Si le participant est present, il est actuellement connecte et son nom est pris.
+    Si la room n'existe pas encore ou si le participant est absent, le nom est libre.
+
+    Note : LiveKit retire automatiquement un participant de la room des qu'il
+    se deconnecte. Il n'y a donc aucune donnee residuelle a nettoyer manuellement.
+    """
+    import urllib.request
+    import urllib.error
+    import json
+    import jwt
+    import time
+
+    # Generation d'un token d'administration avec les droits de lecture de la room
+    admin_payload = {
+        "iss": params["api_key"],
+        "sub": "admin-check",
+        "nbf": int(time.time()),
+        "exp": int(time.time()) + 30,
+        "video": {
+            "roomAdmin": True,
+            "room": params["room_name"]
+        }
+    }
+    admin_token = jwt.encode(admin_payload, params["api_secret"], algorithm="HS256")
+
+    # Construction de l'URL de l'API REST LiveKit
+    # L'API utilise HTTPS (wss -> https, ws -> http)
+    base_url = params["server_url"].replace("wss://", "https://").replace("ws://", "http://")
+    api_url = f"{base_url}/twirp/livekit.RoomService/ListParticipants"
+
+    body = json.dumps({"room": params["room_name"]}).encode("utf-8")
+    req = urllib.request.Request(api_url, data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("Authorization", f"Bearer {admin_token}")
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            data = json.loads(response.read())
+            participants = data.get("participants", [])
+            active_identities = [p.get("identity", "") for p in participants]
+            return params["robot_identity"] in active_identities
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            # La room n'existe pas encore : personne dedans, nom libre
+            return False
+        # Toute autre erreur HTTP : on suppose que le nom est libre pour ne pas bloquer
+        return False
+    except Exception:
+        # En cas d'erreur reseau ou autre : on laisse passer et on tentera la connexion
+        return False
 
 
 async def test_connectivity(params):
@@ -317,8 +391,8 @@ async def start_streaming(params):
 
     payload = {
         "iss": params["api_key"],
-        "sub": "local-simulator",
-        "name": "Simulateur Robot (local)",
+        "sub": params["robot_identity"],
+        "name": params["robot_identity"],
         "nbf": int(time.time()),
         "exp": int(time.time()) + 86400,
         "video": {
@@ -333,6 +407,104 @@ async def start_streaming(params):
     print()
     print("Connexion a la room en cours...")
     room = rtc.Room()
+
+    # Stocke les taches de lecture audio distante pour les annuler a la deconnexion
+    remote_audio_tasks = []
+
+    async def play_remote_audio(track, participant_identity):
+        """
+        Recoit les frames audio d'un participant distant et les joue en temps reel
+        sur les haut-parleurs locaux via sounddevice.
+
+        Architecture lock-free, compatible Linux / Raspberry Pi :
+        - collections.deque : thread-safe sans verrou (GIL, single-producer/single-consumer).
+          Jamais de lock dans le callback audio — indispensable pour eviter les glitches.
+        - Pas de blocksize fixe sur l'OutputStream : sounddevice choisit la taille optimale
+          selon le materiel. Cela evite le mismatch avec les frames LiveKit (480 samples WebRTC).
+        - Buffer 'leftover' : gere le desalignement entre la taille des frames recues et celle
+          demandee par le callback. Aucune perte de sample, aucune latence ajoutee.
+        - Si la deque depasse 20 frames (~200ms), on jette les nouvelles pour ne pas accumuler.
+        """
+        import collections
+        sample_deque = collections.deque()
+        # Buffer de samples residuels entre deux appels du callback (np.ndarray ou vide)
+        leftover = np.zeros((0, CHANNELS), dtype=np.int16)
+        output_stream = None
+
+        def output_callback(outdata, frames, time_info, status):
+            nonlocal leftover
+            result = np.zeros((frames, CHANNELS), dtype=np.int16)
+            pos = 0
+
+            # 1. Consommer d'abord les echantillons restants du precedent callback
+            if len(leftover) > 0:
+                n = min(len(leftover), frames)
+                result[:n] = leftover[:n]
+                leftover = leftover[n:]
+                pos = n
+
+            # 2. Puis piocher dans la deque jusqu'a remplir outdata
+            while pos < frames:
+                try:
+                    chunk = sample_deque.popleft()
+                except IndexError:
+                    break  # Plus de donnees : le reste reste a zero (silence)
+                n = min(len(chunk), frames - pos)
+                result[pos:pos + n] = chunk[:n]
+                if n < len(chunk):
+                    # Conserver le reste pour le prochain callback (pas de perte)
+                    leftover = chunk[n:]
+                pos += n
+
+            outdata[:] = result
+
+        try:
+            output_stream = sd.OutputStream(
+                samplerate=SAMPLE_RATE,
+                channels=CHANNELS,
+                dtype="int16",
+                # Pas de blocksize fixe : sounddevice choisit la taille optimale
+                # selon le driver audio du systeme (Windows WASAPI, Linux ALSA, RPi).
+                callback=output_callback
+            )
+            output_stream.start()
+            print(f"  Audio entrant de '{participant_identity}' — lecture sur les haut-parleurs.")
+
+            audio_stream = rtc.AudioStream(track, sample_rate=SAMPLE_RATE, num_channels=CHANNELS)
+            async for event in audio_stream:
+                frame = event.frame
+                pcm = np.frombuffer(bytes(frame.data), dtype=np.int16).reshape(-1, CHANNELS)
+                # Limite de ~200ms de buffer (20 frames x 480 samples a 48kHz)
+                # Si la deque est pleine, on jette la frame plutot que de bloquer
+                if len(sample_deque) < 20:
+                    sample_deque.append(pcm)
+
+        except sd.PortAudioError as e:
+            print(f"  Avertissement : lecture audio de '{participant_identity}' impossible : {e}")
+        except Exception as e:
+            print(f"  Avertissement : erreur audio distant '{participant_identity}' : {e}")
+        finally:
+            if output_stream is not None:
+                try:
+                    output_stream.stop()
+                    output_stream.close()
+                except Exception:
+                    pass
+
+    @room.on("track_subscribed")
+    def on_track_subscribed(track, publication, participant):
+        """
+        Declenche automatiquement la lecture audio quand un participant distant
+        commence a diffuser. On exclut le propre participant pour eviter l'echo.
+        """
+        if track.kind != rtc.TrackKind.KIND_AUDIO:
+            return
+        if participant.identity == params["robot_identity"]:
+            # Ne pas jouer son propre audio en boucle
+            return
+        task = asyncio.ensure_future(play_remote_audio(track, participant.identity))
+        remote_audio_tasks.append(task)
+
     try:
         await room.connect(params["server_url"], token)
     except Exception as e:
@@ -431,11 +603,17 @@ async def start_streaming(params):
 
     try:
         await asyncio.gather(capture_video(), capture_audio())
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Arret normal demande par l'utilisateur (Ctrl+C)
         print("\nArret du streaming demande.")
     except Exception as e:
         print(f"\nErreur inattendue pendant le streaming : {e}")
     finally:
+        # Annulation des taches de lecture audio distante avant deconnexion
+        for task in remote_audio_tasks:
+            task.cancel()
+        if remote_audio_tasks:
+            await asyncio.gather(*remote_audio_tasks, return_exceptions=True)
         cap.release()
         await room.disconnect()
         print("Deconnecte. A bientot.")
@@ -450,6 +628,43 @@ async def run():
     print_banner()
     params = collect_parameters()
 
+    # Verification du nom de robot avant de lancer le streaming.
+    # Si le nom est deja pris par un simulateur actif dans la room,
+    # on invite l'utilisateur a en choisir un autre.
+    # LiveKit libere automatiquement le nom des qu'un participant se deconnecte,
+    # il n'y a donc pas de conflit persistant entre deux sessions.
+    print()
+    print("Verification du nom de robot en cours...")
+    if check_identity_in_room(params):
+        print()
+        print(f"  Le nom '{params['robot_identity']}' est deja utilise par un simulateur actif dans cette room.")
+        print("  Choisissez un nom different pour eviter le conflit.")
+        print()
+
+        # En mode pipe (lancement depuis un fichier), il n'est pas possible
+        # de demander un nouveau nom interactivement. On ajoute automatiquement
+        # un suffixe numerique derive du timestamp pour eviter le conflit.
+        if not sys.stdin.isatty():
+            import time
+            suffix = str(int(time.time()))[-4:]
+            auto_identity = f"{params['robot_identity']}-{suffix}"
+            params["robot_identity"] = auto_identity
+            print(f"  Mode automatique : nom ajuste en '{auto_identity}'.")
+        else:
+            while True:
+                new_name = prompt_string("Nouveau nom de robot", required=True)
+                new_name = "".join(c if c.isalnum() or c == "-" else "-" for c in new_name.strip()).lower()
+                new_identity = f"simulateur-robot-{new_name}"
+                params["robot_identity"] = new_identity
+
+                if not check_identity_in_room(params):
+                    print(f"  Nom '{new_identity}' disponible.")
+                    break
+                else:
+                    print(f"  '{new_identity}' est aussi pris. Essayez un autre nom.")
+    else:
+        print(f"  Nom '{params['robot_identity']}' disponible.")
+
     connected = await test_connectivity(params)
     if not connected:
         print()
@@ -462,4 +677,9 @@ async def run():
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(run())
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        # L'utilisateur a appuye sur Ctrl+C depuis le terminal principal.
+        # Le nettoyage a deja ete effectue dans le bloc finally de start_streaming.
+        print("\nProgramme arrete.")

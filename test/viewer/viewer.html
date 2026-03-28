@@ -306,9 +306,71 @@
     .log-line.warn { color: #d29922; }
     .log-line.error { color: #f85149; }
 
+    /* --- Barre micro operateur (fixe en bas de page) --- */
+    .mic-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: #161b22;
+      border-top: 2px solid #30363d;
+      padding: 14px 32px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      z-index: 100;
+    }
+
+    .btn-mic {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 24px;
+      border: 2px solid;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      letter-spacing: 0.3px;
+    }
+
+    .btn-mic.off {
+      background: #2d1b1b;
+      border-color: #f85149;
+      color: #f85149;
+    }
+    .btn-mic.off:hover { background: #3d2020; }
+
+    .btn-mic.on {
+      background: #1b2d1b;
+      border-color: #3fb950;
+      color: #3fb950;
+      box-shadow: 0 0 12px #3fb95044;
+    }
+    .btn-mic.on:hover { background: #203420; }
+
+    .mic-label { font-size: 13px; color: #8b949e; }
+
+    .btn-speaker {
+      background: none;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #8b949e;
+      transition: all 0.15s;
+      margin-top: 4px;
+    }
+    .btn-speaker:hover { background: #21262d; color: #e6edf3; }
+    .btn-speaker.muted { color: #f85149; border-color: #f85149; }
+
+    /* Ajouter une marge en bas pour ne pas etre masque par la mic-bar */
+    .container { padding-bottom: 90px; }
+
     @media (max-width: 768px) {
       .form-grid { grid-template-columns: 1fr; }
       .main-layout { grid-template-columns: 1fr; }
+      .mic-bar { padding: 12px 16px; }
     }
   </style>
 </head>
@@ -337,22 +399,26 @@
         <label>Nom de la room</label>
         <input type="text" id="room-name" value="oscar-lot1-room" placeholder="nom-de-la-room" />
       </div>
-      <div class="form-group full">
-        <label>Token JWT d'acces</label>
-        <input type="text" id="token" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." />
+      <div class="form-group">
+        <label>Cle API LiveKit</label>
+        <input type="text" id="api-key" value="oscar_prod_key" />
       </div>
-    </div>
-
-    <!-- Lien Confluence -->
-    <div class="token-help">
-      <span class="icon">🔑</span>
-      <span>
-        Vous n'avez pas de token ?
-        Consultez la documentation pour obtenir une cle d'acces a la room :
-        <a href="https://oscar-bot.atlassian.net/wiki/x/AQAS" target="_blank" rel="noopener">
-          Documentation OSCAR — Acces a la Room LiveKit ↗
-        </a>
-      </span>
+      <div class="form-group">
+        <label>Secret API LiveKit</label>
+        <input type="password" id="api-secret" value="oscar_super_secret_prod_key" />
+      </div>
+      <div class="form-group full">
+        <label>Nom de l'operateur du casque <span style="color:#f85149">*</span></label>
+        <input type="text" id="operator-name" placeholder="ex : joel, alice, operateur-02" />
+        <div style="font-size:11px;color:#8b949e;margin-top:5px;">
+          Entrez votre prenom ou un identifiant unique. Chaque operateur doit avoir un nom different pour eviter d'etre deconnecte par quelqu'un d'autre.
+        </div>
+      </div>
+      <div class="form-group full">
+        <label>Token genere <span style="font-size:10px;color:#3fb950;font-weight:400;">(rempli automatiquement a la connexion)</span></label>
+        <input type="text" id="token-display" readonly placeholder="Le token apparaitra ici apres connexion..."
+          style="color:#8b949e;cursor:default;font-size:11px;" />
+      </div>
     </div>
 
     <button class="btn-connect" id="btn-connect" onclick="connectToRoom()">Se connecter a la room</button>
@@ -403,11 +469,30 @@
 
 </div>
 
+<!-- Barre microphone fixee en bas de page -->
+<!-- Affichee uniquement apres connexion a la room -->
+<div class="mic-bar" id="mic-bar" style="display:none;">
+  <button class="btn-mic off" id="btn-mic" onclick="toggleMic()">
+    <span id="mic-icon">MIC COUPE</span>
+  </button>
+  <span class="mic-label" id="mic-status">
+    Votre microphone est coupe. Cliquez pour prendre la parole dans la room.
+  </span>
+</div>
+
 <script>
   const { Room, RoomEvent, Track, VideoPresets, ConnectionState } = LivekitClient;
 
   let room = null;
   let activeParticipantIdentity = null;
+
+  // Gestion du microphone local de l'operateur
+  let localMicTrack = null;
+  let micEnabled = false;
+
+  // Table des elements audio par participant (pour le mute local)
+  // cle = identity du participant, valeur = { element: HTMLAudioElement, muted: bool }
+  const participantAudioElements = {};
 
   function log(msg, type = 'info') {
     const div = document.getElementById('log');
@@ -426,15 +511,137 @@
     if (state === 'error') dot.classList.add('error');
   }
 
-  async function connectToRoom() {
-    const serverUrl = document.getElementById('server-url').value.trim();
-    const token     = document.getElementById('token').value.trim();
-    const btn       = document.getElementById('btn-connect');
+  // Active ou coupe le microphone de l'operateur dans la room.
+  // Le micro n'est jamais publie tant que l'operateur ne clique pas.
+  // Ceci n'affecte pas les autres viewers connectes — c'est une action locale.
+  async function toggleMic() {
+    if (!room) return;
+    const btn  = document.getElementById('btn-mic');
+    const icon = document.getElementById('mic-icon');
+    const status = document.getElementById('mic-status');
 
-    if (!serverUrl || !token) {
-      log('Renseignez l\'URL du serveur et le token JWT.', 'warn');
+    if (!micEnabled) {
+      try {
+        if (!localMicTrack) {
+          // Premiere activation : on cree et publie le track micro
+          localMicTrack = await LivekitClient.createLocalAudioTrack({ echoCancellation: true, noiseSuppression: true });
+          await room.localParticipant.publishTrack(localMicTrack);
+        } else {
+          await localMicTrack.unmute();
+        }
+        micEnabled = true;
+        btn.className = 'btn-mic on';
+        icon.textContent = 'MIC ACTIF';
+        status.textContent = 'Vous etes en train de parler dans la room. Cliquez pour couper.';
+        log('Microphone active — vous parlez dans la room.', 'success');
+      } catch (err) {
+        log(`Impossible d'activer le microphone : ${err.message}`, 'error');
+      }
+    } else {
+      try {
+        await localMicTrack.mute();
+        micEnabled = false;
+        btn.className = 'btn-mic off';
+        icon.textContent = 'MIC COUPE';
+        status.textContent = 'Votre microphone est coupe. Cliquez pour prendre la parole dans la room.';
+        log('Microphone coupe.', 'info');
+      } catch (err) {
+        log(`Erreur lors de la desactivation du micro : ${err.message}`, 'error');
+      }
+    }
+  }
+
+  // Coupe ou reactiver l'audio d'un participant specifique.
+  // N'impacte QUE cette instance du navigateur — les autres viewers ne sont pas affectes.
+  function toggleParticipantAudio(identity) {
+    const entry = participantAudioElements[identity];
+    if (!entry) return;
+    entry.muted = !entry.muted;
+    entry.element.muted = entry.muted;
+    refreshParticipantList();
+    log(`Audio de '${identity}' : ${entry.muted ? 'coupe' : 'reactiver'} (local uniquement).`, 'info');
+  }
+
+  // Genere un token JWT signe avec HMAC-SHA256 via l'API Web Crypto du navigateur.
+  // Aucune librairie externe requise — c'est du JavaScript standard.
+  async function signJWT(payload, secret) {
+    const header = { alg: 'HS256', typ: 'JWT' };
+    const encode = obj => btoa(JSON.stringify(obj))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+    const signingInput = `${encode(header)}.${encode(payload)}`;
+
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    const signature = await crypto.subtle.sign(
+      'HMAC',
+      key,
+      new TextEncoder().encode(signingInput)
+    );
+
+    const sigB64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+
+    return `${signingInput}.${sigB64}`;
+  }
+
+  async function connectToRoom() {
+    const serverUrl   = document.getElementById('server-url').value.trim();
+    const roomName    = document.getElementById('room-name').value.trim();
+    const apiKey      = document.getElementById('api-key').value.trim();
+    const apiSecret   = document.getElementById('api-secret').value.trim();
+    const operatorRaw = document.getElementById('operator-name').value.trim();
+    const btn         = document.getElementById('btn-connect');
+
+    if (!serverUrl || !apiKey || !apiSecret) {
+      log('Renseignez l\'URL du serveur, la cle API et le secret.', 'warn');
       return;
     }
+
+    if (!operatorRaw) {
+      log('Le nom de l\'operateur est obligatoire.', 'warn');
+      document.getElementById('operator-name').focus();
+      return;
+    }
+
+    // Nettoyage du nom et construction de l'identite unique pour cet operateur
+    const operatorName   = operatorRaw.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+    const viewerIdentity = `casque-${operatorName}`;
+
+    // Generation du token JWT localement via Web Crypto
+    // Chaque operateur obtient un token avec son propre sub — impossible d'etre ejecte
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: apiKey,
+      sub: viewerIdentity,
+      name: `Operateur ${operatorName}`,
+      nbf: now,
+      exp: now + 86400,
+      video: {
+        room: roomName,
+        roomJoin: true,
+        canPublish: true,
+        canSubscribe: true
+      }
+    };
+
+    let token;
+    try {
+      token = await signJWT(payload, apiSecret);
+      // Affichage du token genere dans le champ lecture seule
+      document.getElementById('token-display').value = token;
+    } catch (err) {
+      log(`Erreur de generation du token : ${err.message}`, 'error');
+      return;
+    }
+
+    log(`Connexion en tant que : ${viewerIdentity}`, 'info');
 
     btn.disabled = true;
     btn.textContent = 'Connexion en cours...';
@@ -448,6 +655,8 @@
       setStatus('connected');
       btn.textContent = 'Connecte - Cliquer pour se reconnecter';
       btn.disabled = false;
+      // Afficher la barre micro maintenant que la room est active
+      document.getElementById('mic-bar').style.display = 'flex';
       refreshParticipantList();
     });
 
@@ -456,6 +665,10 @@
       setStatus('error');
       btn.textContent = 'Se connecter a la room';
       btn.disabled = false;
+      // Cacher la barre micro et reinitialiser son etat
+      document.getElementById('mic-bar').style.display = 'none';
+      micEnabled = false;
+      localMicTrack = null;
       clearViewer();
       document.getElementById('participant-list').innerHTML = '<div class="empty-state">Connectez-vous a une room pour voir les participants</div>';
       document.getElementById('participant-count').textContent = '0';
@@ -473,13 +686,41 @@
     });
 
     room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+      // Ne jamais jouer son propre audio — evite l'echo desagreable
+      if (track.kind === Track.Kind.Audio && participant.identity === viewerIdentity) {
+        log(`Audio propre ignore (anti-echo) : ${participant.identity}`, 'info');
+        return;
+      }
       log(`Track recu de "${participant.identity}" : ${track.kind}`, 'info');
+      // Pour l'audio : attacher au DOM et enregistrer pour le mute local
+      if (track.kind === Track.Kind.Audio) {
+        const el = track.attach();
+        el.autoplay = true;
+        el.style.display = 'none';
+        el.dataset.identity = participant.identity;
+        document.body.appendChild(el);
+        // Applique l'eventuel etat mute existant pour ce participant
+        const prev = participantAudioElements[participant.identity];
+        if (prev) { el.muted = prev.muted; }
+        participantAudioElements[participant.identity] = {
+          element: el,
+          muted: prev ? prev.muted : false
+        };
+      }
       refreshParticipantList();
       if (activeParticipantIdentity === participant.identity) attachTrack(track, participant);
     });
 
     room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
       log(`Track perdu de "${participant.identity}" : ${track.kind}`, 'warn');
+      if (track.kind === Track.Kind.Audio) {
+        // Nettoyer l'element audio enregistre
+        const entry = participantAudioElements[participant.identity];
+        if (entry && entry.element.parentNode) {
+          entry.element.parentNode.removeChild(entry.element);
+        }
+        delete participantAudioElements[participant.identity];
+      }
       refreshParticipantList();
     });
 
@@ -513,6 +754,15 @@
       const hasAudio = [...p.trackPublications.values()].some(t => t.kind === Track.Kind.Audio && t.isSubscribed);
       const initials = (p.name || p.identity || '?').slice(0, 2).toUpperCase();
       const isActive = p.identity === activeParticipantIdentity;
+      const audioEntry = participantAudioElements[p.identity];
+      const isMuted = audioEntry ? audioEntry.muted : false;
+      const speakerBtn = hasAudio
+        ? `<button class="btn-speaker ${isMuted ? 'muted' : ''}"
+             title="${isMuted ? 'Reactiver l\'audio (local)' : 'Couper l\'audio (local)'}"
+             onclick="event.stopPropagation(); toggleParticipantAudio('${p.identity}')">
+             ${isMuted ? '🔇 MUTE' : '🔊 SON'}
+           </button>`
+        : '';
       return `
         <div class="participant-item ${isActive ? 'active' : ''}" onclick="selectParticipant('${p.identity}')">
           <div class="participant-avatar">${initials}</div>
@@ -523,6 +773,7 @@
               <span class="badge ${hasVideo ? 'active' : ''}">VIDEO</span>
               <span class="badge ${hasAudio ? 'active' : ''}">AUDIO</span>
             </div>
+            ${speakerBtn}
           </div>
         </div>`;
     }).join('');
