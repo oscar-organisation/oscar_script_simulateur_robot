@@ -1,4 +1,27 @@
-# OSCAR - Simulateur Robot (Camera + Microphone)
+# OSCAR - Simulateurs Robot
+
+Ce dépôt regroupe les sources qui émulent un robot OSCAR. Les deux modes ont le
+même contrat LiveKit, mais des environnements d'exécution distincts.
+
+- Le simulateur léger à la racine publie une caméra et un microphone depuis un
+  poste Windows, Linux, macOS ou Raspberry Pi.
+- `isaac-sim/` pilote la scène NVIDIA Isaac Sim, publie les caméras robot et
+  reçoit les commandes de téléopération.
+
+## Isaac Sim
+
+Les scripts `isaac-sim/kit_bootstrap_*.py` sont les points d'entrée Kit. Les
+tests de mapping et de locomotion peuvent être exécutés sans lancer la scène :
+
+```bash
+cd isaac-sim
+python3 -m unittest test_teleop_mapping.py test_g1_locomotion.py
+```
+
+Les fichiers USD, jetons LiveKit et profils `.env` restent hors du dépôt. La
+scène référence ces scripts au déploiement, elle ne contient pas de secret.
+
+## Simulateur léger
 
 Ce programme capture la camera et le microphone de votre machine et les publie en direct vers le serveur LiveKit OSCAR, permettant a un casque VR ou a n'importe quel client de voir et d'entendre votre flux en temps reel.
 

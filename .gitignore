@@ -9,3 +9,10 @@ env/
 *.egg-info/
 dist/
 build/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+*.tar.gz
+isaac-sim/frozen-*/
