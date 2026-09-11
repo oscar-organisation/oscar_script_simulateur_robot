@@ -1,0 +1,22 @@
+# Core: LiveKit Python real-time SDK (publishes media tracks to a Room).
+# 1.1.x is required — earlier 0.x versions ship a libwebrtc that fails ICE
+# gathering on cloud VMs whose public IP is SNAT-only (e.g. Nebius, where the
+# instance only sees its private 10.x.x.x and never binds the public IP).
+livekit>=1.1.12
+livekit-api>=1.1.1
+
+# Frame manipulation. numpy is the canonical buffer; opencv is used for the
+# mock file source and resize. Both are pure-pip and available on Ubuntu 24.04.
+numpy>=1.26
+opencv-python-headless>=4.10
+
+# Token signing for the standalone publisher (mirrors create-livekit-tokens.mjs).
+PyJWT>=2.9
+
+# Optional GPU acceleration for the cubemap → equirectangular conversion.
+# Pinned to the CUDA 12.x family (matches the Isaac Sim 5.1 container).
+# If absent, equirect.py falls back to a numpy implementation automatically.
+# cupy-cuda12x>=13.3
+
+# Optional: load environment files (LIVEKIT_URL, LIVEKIT_TOKEN, …) from .env.
+python-dotenv>=1.0
